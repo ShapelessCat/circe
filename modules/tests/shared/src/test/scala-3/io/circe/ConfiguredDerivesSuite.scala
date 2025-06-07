@@ -439,12 +439,12 @@ class ConfiguredDerivesSuite extends CirceMunitSuite:
     assert(Decoder[ConfigExampleBase].decodeJson(json) === Left(failure("unexpected fields: anotherField")))
     assert(
       Decoder[ConfigExampleBase].decodeAccumulating(json.hcursor) === Validated.invalidNel(
-        failure("unexpected field: anotherField")
+        failure("unexpected fields: anotherField")
       )
     )
   }
 
-    test(
+  test(
     "Configuration#strictDecoding on product types should not fail fast on decodeAccumulating if there are unexpected fields"
   ) {
     given Configuration = Configuration.default.withStrictDecoding
@@ -466,8 +466,8 @@ class ConfiguredDerivesSuite extends CirceMunitSuite:
     assert(
       Decoder[ConfigExampleBase].decodeAccumulating(json.hcursor) === Validated.invalid(
         NonEmptyList(
-          strictFailure("unexpected field: invalidField"),
-          List(DecodingFailure("Double", List(DownField("ConfigExampleFoo"), DownField("b"))))
+          strictFailure("unexpected fields: invalidField"),
+          List(DecodingFailure("Double", List(DownField("b"), DownField("ConfigExampleFoo"))))
         )
       )
     )
