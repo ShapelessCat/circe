@@ -29,6 +29,7 @@ import io.circe.derivation.*
 import io.circe.syntax.*
 import org.scalacheck.{ Arbitrary, Gen }
 import org.scalacheck.Prop.forAll
+import cats.data.NonEmptyList
 
 object ConfiguredDerivesSuite:
   // "derives ConfiguredCodec" is not here so we can change the configuration for the derivation in each test
@@ -439,6 +440,35 @@ class ConfiguredDerivesSuite extends CirceMunitSuite:
     assert(
       Decoder[ConfigExampleBase].decodeAccumulating(json.hcursor) === Validated.invalidNel(
         failure("unexpected field: anotherField")
+      )
+    )
+  }
+
+    test(
+    "Configuration#strictDecoding on product types should not fail fast on decodeAccumulating if there are unexpected fields"
+  ) {
+    given Configuration = Configuration.default.withStrictDecoding
+    given Codec[ConfigExampleBase] = Codec.AsObject.derivedConfigured
+
+    val json = Json.obj(
+      "ConfigExampleFoo" -> Json.obj(
+        "thisIsAField" -> "not used".asJson,
+        "a" -> 0.asJson,
+        "b" -> "should be a double".asJson,
+        "invalidField" -> "some value".asJson
+      )
+    )
+    def strictFailure(submessage: String) = DecodingFailure(
+      s"Strict decoding ConfigExampleFoo - $submessage; valid fields: thisIsAField, a, b.",
+      List(DownField("ConfigExampleFoo"))
+    )
+    assert(Decoder[ConfigExampleBase].decodeJson(json) === Left(strictFailure("unexpected fields: invalidField")))
+    assert(
+      Decoder[ConfigExampleBase].decodeAccumulating(json.hcursor) === Validated.invalid(
+        NonEmptyList(
+          strictFailure("unexpected field: invalidField"),
+          List(DecodingFailure("Double", List(DownField("ConfigExampleFoo"), DownField("b"))))
+        )
       )
     )
   }
