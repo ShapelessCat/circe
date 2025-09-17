@@ -34,7 +34,7 @@ val shapelessVersion = "2.3.13"
 
 val paradiseVersion = "2.1.1"
 
-val scalaCheckVersion = "1.18.1"
+val scalaCheckVersion = "1.19.0"
 val munitVersion = "1.1.1"
 val munitScalaCheckVersion = "1.1.0"
 val disciplineVersion = "1.7.0"
@@ -364,7 +364,7 @@ lazy val scalajsJavaTimeTest = circeModule("scalajs-java-time-test")
 
 lazy val scodec = circeCrossModule("scodec")
   .settings(
-    libraryDependencies += "org.scodec" %%% "scodec-bits" % "1.2.1"
+    libraryDependencies += "org.scodec" %%% "scodec-bits" % "1.2.4"
   )
   .platformsSettings(JSPlatform, NativePlatform)(
     libraryDependencies += "io.github.cquiroz" %%% "scala-java-time" % scalaJavaTimeVersion % Test
