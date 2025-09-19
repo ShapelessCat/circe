@@ -118,56 +118,52 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
   /** Ensures cursor is a json object, handles strict decoding. */
   private def decodeProductBase[R](
     c: HCursor,
-    fail: DecodingFailure => R,
-    strictFail: (List[String], IndexedSeq[String]) => R
-  )(decodeProduct: => R): R =
+    fail: DecodingFailure => R
+  )(decodeProduct: Option[DecodingFailure] => R): R =
     c.value.isObject match
       case false                        => fail(DecodingFailure(WrongTypeExpectation("object", c.value), c.history))
-      case true if !conf.strictDecoding => decodeProduct
+      case true if !conf.strictDecoding => decodeProduct(None)
       case true                         =>
         val expectedFields = elemLabels.toIndexedSeq.map(conf.transformMemberNames) ++ conf.discriminator
         val expectedFieldsSet = expectedFields.toSet
         val unexpectedFields = c.keys.map(_.toList.filterNot(expectedFieldsSet)).getOrElse(Nil)
-        if unexpectedFields.nonEmpty then strictFail(unexpectedFields, expectedFields)
-        else decodeProduct
+        val strictFailure = if unexpectedFields.isEmpty then None
+        else
+          Some(
+            strictDecodingFailure(
+              c,
+              s"unexpected fields: ${unexpectedFields.mkString(", ")}; valid fields: ${expectedFields.mkString(", ")}."
+            )
+          )
+        decodeProduct(strictFailure)
 
   final def decodeProduct(c: HCursor, fromProduct: Product => A): Decoder.Result[A] =
-    def strictFail(unexpectedFields: List[String], expectedFields: IndexedSeq[String]): Decoder.Result[A] =
-      Left(
-        strictDecodingFailure(
-          c,
-          s"unexpected fields: ${unexpectedFields.mkString(", ")}; valid fields: ${expectedFields.mkString(", ")}."
-        )
-      )
+    decodeProductBase(c, Left.apply) {
+      case Some(strictFailure) =>
+        Left(strictFailure)
+      case None =>
+        val res = new Array[Any](elemLabels.length)
+        var failed: Left[DecodingFailure, ?] = null
 
-    decodeProductBase(c, Left.apply, strictFail) {
-      val res = new Array[Any](elemLabels.length)
-      var failed: Left[DecodingFailure, ?] = null
+        def withDefault(result: Decoder.Result[Any], cursor: ACursor, default: Any): Decoder.Result[Any] = result match
+          case r @ Right(_) if r.ne(Decoder.keyMissingNone)                      => r
+          case l @ Left(_) if cursor.succeeded && !cursor.focus.exists(_.isNull) => l
+          case _                                                                 => Right(default)
 
-      def withDefault(result: Decoder.Result[Any], cursor: ACursor, default: Any): Decoder.Result[Any] = result match
-        case r @ Right(_) if r.ne(Decoder.keyMissingNone)                      => r
-        case l @ Left(_) if cursor.succeeded && !cursor.focus.exists(_.isNull) => l
-        case _                                                                 => Right(default)
+        var index = 0
+        while index < elemLabels.length && (failed eq null) do
+          decodeProductElement(c, index, _.tryDecode, withDefault) match
+            case Right(value) => res(index) = value
+            case l @ Left(_)  => failed = l
+          index += 1
+        end while
 
-      var index = 0
-      while index < elemLabels.length && (failed eq null) do
-        decodeProductElement(c, index, _.tryDecode, withDefault) match
-          case Right(value) => res(index) = value
-          case l @ Left(_)  => failed = l
-        index += 1
-      end while
-
-      if failed eq null then Right(fromProduct(Tuple.fromArray(res)))
-      else failed.asInstanceOf[Decoder.Result[A]]
+        if failed eq null then Right(fromProduct(Tuple.fromArray(res)))
+        else failed.asInstanceOf[Decoder.Result[A]]
     }
-  final def decodeProductAccumulating(c: HCursor, fromProduct: Product => A): Decoder.AccumulatingResult[A] =
-    def strictFail(unexpectedFields: List[String], expectedFields: IndexedSeq[String]): Decoder.AccumulatingResult[A] =
-      val failures = unexpectedFields.map { field =>
-        strictDecodingFailure(c, s"unexpected field: $field; valid fields: ${expectedFields.mkString(", ")}.")
-      }
-      Validated.invalid(NonEmptyList.fromListUnsafe(failures))
 
-    decodeProductBase(c, Validated.invalidNel, strictFail) {
+  final def decodeProductAccumulating(c: HCursor, fromProduct: Product => A): Decoder.AccumulatingResult[A] =
+    decodeProductBase(c, Validated.invalidNel) { strictFailure =>
       val res = new Array[Any](elemLabels.length)
       val failed = List.newBuilder[DecodingFailure]
 
@@ -188,7 +184,7 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
         index += 1
       end while
 
-      val failures = failed.result()
+      val failures = List(strictFailure).flatten ++ failed.result()
       if failures.isEmpty then Validated.valid(fromProduct(Tuple.fromArray(res)))
       else Validated.invalid(NonEmptyList.fromListUnsafe(failures))
     }
