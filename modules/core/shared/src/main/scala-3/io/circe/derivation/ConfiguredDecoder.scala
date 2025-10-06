@@ -18,11 +18,9 @@ package io.circe.derivation
 
 import scala.deriving.Mirror
 import scala.compiletime.{ constValue, summonInline }
-import Predef.genericArrayOps
 import cats.data.{ NonEmptyList, Validated }
 import io.circe.{ ACursor, Decoder, DecodingFailure, HCursor }
 import io.circe.DecodingFailure.Reason.WrongTypeExpectation
-import cats.implicits.*
 import scala.annotation.tailrec
 import scala.collection.immutable.Map
 import scala.quoted.*
@@ -33,6 +31,8 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
   lazy val elemDecoders: List[Decoder[?]]
   lazy val elemDefaults: Default[A]
   lazy val constructorNames: List[String] = elemLabels.map(conf.transformConstructorNames)
+
+  private lazy val memberNames: IndexedSeq[String] = elemLabels.map(conf.transformMemberNames).toIndexedSeq
 
   private lazy val decodersDict: Map[String, Decoder[?]] = {
     def findDecoderDict(p: (String, Decoder[?])): List[(String, Decoder[?])] =
@@ -88,7 +88,7 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
                 fail(
                   strictDecodingFailure(
                     c,
-                    s"expected a single key json object with one of: ${constructorNames.iterator.mkString(", ")}."
+                    s"expected a single key json object with one of: ${constructorNames.mkString(", ")}."
                   )
                 )
               else fromName(sumTypeName, c.downField(sumTypeName), iter.map(key => (key, c.downField(key))))
@@ -106,7 +106,7 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
     withDefault: (R, ACursor, Any) => R
   ): R =
     val decoder = elemDecoders(index).asInstanceOf[Decoder[Any]]
-    val cursor = c.downField(conf.transformMemberNames(elemLabels(index)))
+    val cursor = c.downField(memberNames(index))
     val result = decode(decoder)(cursor)
 
     if conf.useDefaults then
@@ -124,7 +124,7 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
       case false                        => fail(DecodingFailure(WrongTypeExpectation("object", c.value), c.history))
       case true if !conf.strictDecoding => decodeProduct(None)
       case true                         =>
-        val expectedFields = elemLabels.toIndexedSeq.map(conf.transformMemberNames) ++ conf.discriminator
+        val expectedFields = memberNames ++ conf.discriminator
         val expectedFieldsSet = expectedFields.toSet
         val unexpectedFields = c.keys.map(_.toList.filterNot(expectedFieldsSet)).getOrElse(Nil)
         val strictFailure = if unexpectedFields.isEmpty then None
@@ -142,7 +142,7 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
       case Some(strictFailure) =>
         Left(strictFailure)
       case None =>
-        val res = new Array[Any](elemLabels.length)
+        val res = new Array[Any](memberNames.length)
         var failed: Left[DecodingFailure, ?] = null
 
         def withDefault(result: Decoder.Result[Any], cursor: ACursor, default: Any): Decoder.Result[Any] = result match
@@ -151,7 +151,7 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
           case _                                                                 => Right(default)
 
         var index = 0
-        while index < elemLabels.length && (failed eq null) do
+        while index < res.length && (failed eq null) do
           decodeProductElement(c, index, _.tryDecode, withDefault) match
             case Right(value) => res(index) = value
             case l @ Left(_)  => failed = l
@@ -164,7 +164,7 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
 
   final def decodeProductAccumulating(c: HCursor, fromProduct: Product => A): Decoder.AccumulatingResult[A] =
     decodeProductBase(c, Validated.invalidNel) { strictFailure =>
-      val res = new Array[Any](elemLabels.length)
+      val res = new Array[Any](memberNames.length)
       val failed = List.newBuilder[DecodingFailure]
 
       def withDefault(
@@ -177,7 +177,7 @@ trait ConfiguredDecoder[A](using conf: Configuration) extends Decoder[A]:
         case _                                                                              => Validated.Valid(default)
 
       var index = 0
-      while index < elemLabels.length do
+      while index < res.length do
         decodeProductElement(c, index, _.tryDecodeAccumulating, withDefault) match
           case Validated.Valid(value)      => res(index) = value
           case Validated.Invalid(failures) => failed ++= failures.toList
