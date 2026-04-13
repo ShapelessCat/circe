@@ -16,7 +16,7 @@
 
 package io.circe
 
-import cats.data.Validated.Invalid
+import cats.data.Validated.{ Invalid, Valid }
 import cats.data.{ Chain, NonEmptyList, NonEmptyMap, Validated }
 import cats.implicits._
 import cats.kernel.Eq
@@ -699,6 +699,33 @@ class DecoderSuite extends CirceMunitSuite with LargeNumberDecoderTestsMunit {
     assertEquals(decoder.decodeAccumulating(Json.obj("a" := Json.Null).hcursor), Validated.valid(None))
     assertEquals(decoder.decodeAccumulating(Json.obj("b" := "abc").hcursor), Validated.valid(None))
     assertEquals(decoder.decodeAccumulating(Json.obj("a" := "abc").hcursor), Validated.valid(Some("abc")))
+  }
+
+  test("Decoder#or decodeAccumulating should accumulate errors from all branches (issue #2062)") {
+    val combined = Decoder[Int].at("a").or(Decoder[Int].at("b")).or(Decoder[Int].at("c"))
+
+    val json = parse("""{"a": "not_int", "b": null, "c": true}""").getOrElse(Json.Null)
+    combined.decodeAccumulating(json.hcursor) match {
+      case Invalid(errors) =>
+        assertEquals(
+          errors.toList.map(_.history),
+          List(List(DownField("c")), List(DownField("b")), List(DownField("a")))
+        )
+        assertEquals(errors.toList.map(_.message), List("Int", "Int", "Int"))
+      case Valid(_) => fail("Expected Invalid")
+    }
+  }
+
+  test("Decoder#either decodeAccumulating should accumulate errors from both branches (issue #2062)") {
+    val combined = Decoder[Int].at("a").either(Decoder[String].at("b"))
+
+    val json = parse("""{"a": "not_int", "b": 123}""").getOrElse(Json.Null)
+    combined.decodeAccumulating(json.hcursor) match {
+      case Invalid(errors) =>
+        assertEquals(errors.toList.map(_.history), List(List(DownField("b")), List(DownField("a"))))
+        assertEquals(errors.toList.map(_.message), List("Got value '123' with wrong type, expecting string", "Int"))
+      case Valid(_) => fail("Expected Invalid")
+    }
   }
 
   group("a stateful Decoder with requireEmpty should ") {

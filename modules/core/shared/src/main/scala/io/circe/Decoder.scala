@@ -305,7 +305,7 @@ trait Decoder[A] extends Serializable { self =>
     override def tryDecodeAccumulating(c: ACursor): Decoder.AccumulatingResult[AA] =
       self.tryDecodeAccumulating(c) match {
         case r @ Valid(_) => r
-        case Invalid(_)   => d.tryDecodeAccumulating(c)
+        case Invalid(e)   => d.tryDecodeAccumulating(c).leftMap(_.concatNel(e))
       }
   }
 
@@ -326,10 +326,10 @@ trait Decoder[A] extends Serializable { self =>
     override def tryDecodeAccumulating(c: ACursor): Decoder.AccumulatingResult[Either[A, B]] =
       self.tryDecodeAccumulating(c) match {
         case Valid(v)   => Valid(Left(v))
-        case Invalid(_) =>
+        case Invalid(e) =>
           decodeB.tryDecodeAccumulating(c) match {
-            case Valid(v)       => Valid(Right(v))
-            case l @ Invalid(_) => l.asInstanceOf[Decoder.AccumulatingResult[Either[A, B]]]
+            case Valid(v)   => Valid(Right(v))
+            case Invalid(f) => Invalid(f.concatNel(e))
           }
       }
   }
